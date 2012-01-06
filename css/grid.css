@@ -1,0 +1,28 @@
+/* ==================== */
+/* = CSS Grid         = */
+/* ==================== */
+
+.grid_1 { width:30px; }
+.grid_2 { width:70px; }
+.grid_3 { width:105px; }
+.grid_4 { width:140px; }
+.grid_5 { width:175px; }
+.grid_6 { width:210px; }
+.grid_7 { width:245px; }
+.grid_8 { width:280px; }
+.grid_9 { width:315px; }
+
+.column {
+	margin: 0 5px;
+	overflow: hidden;
+	float: left;
+}
+.row {
+	width: 320px;
+	margin: 0 auto;
+	overflow: hidden;
+}
+.row .row {
+	margin: 0 -5px;
+	width: auto;
+}

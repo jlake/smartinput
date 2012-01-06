@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en" manifest="cache.manifest">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>Smart Input</title>
+<meta name="viewport" content="width=320, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="description" content="Online Chinese input for iPhone/iPad and other SmartPhone，智能设备在线拼音输入法" />
+<meta name="keywords" content="Chinese,Input,Pinyin,iPhone,iPad,SmartPhone,智能，中文,输入法,在线输入法,拼音" />
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style type="text/css" media="screen">
+	@import "css/style.css";
+</style>
+<link rel="shortcut icon" href="favicon.ico" /> 
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script type="text/javascript" src="js/light.js"></script>
+<script type="text/javascript" src="js/py_map.js"></script>
+<script type="text/javascript">
+$.ready(function() {
+	//var isWebkit = /\sAppleWebKit/.test(navigator.userAgent);
+	// 隐藏地址栏
+	function doScroll() {
+		setTimeout(function(){
+			if (window.pageYOffset === 0) { window.scrollTo(0,1); }
+		}, 100);
+	}
+	window.addEventListener('load', doScroll, false);
+	window.onorientationchange = doScroll;
+
+	//全局变量
+	var gPyStack = [];
+	var gWdPages = [];
+	var gPageNo = 0;
+	var gKeyType = {
+		'sm': {text: '拼音', hasFull: false, hasUpper: false},
+		'ym': {text: '拼音', hasFull: false, hasUpper: false},
+		'en': {text: '英文', hasFull: true, hasUpper: true},
+		'sz': {text: '数字', hasFull: false, hasUpper: true},
+		'fh': {text: '符号', hasFull: true, hasUpper: false}
+	};
+	var gKeyWidth = {
+		's': {text: '半'},
+		'f': {text: '全'}
+	};
+	var gKeyCase = {
+		'l': {text: 'a'},
+		'u': {text: 'A'}
+	};
+	var gStatus = {};
+	var $text_box = $('#text_box');
+	var $pinyin_box = $('#pinyin_box');
+	var $word_box = $('#word_box');
+
+	function _trim(s) {
+		if(!s) return s;
+		return s.replace(/(^\s+|\s+$)/, '');
+	}
+	function _updateKeyboard(sType, sWidth, sCase) {
+		gStatus.keyType = sType || gStatus.keyType;
+		gStatus.keyWidth = sWidth || gStatus.keyWidth;
+		gStatus.keyCase = sCase || gStatus.keyCase;
+		//Key width
+		$key_width = $('#key_width');
+		$key_width.html(gKeyWidth[gStatus.keyWidth].text);
+		if(gKeyType[gStatus.keyType].hasFull) {
+			$key_width.removeClass('disabled');
+		} else {
+			gStatus.keyWidth = 's';
+			$key_width.addClass('disabled');
+		}
+		//Key case
+		$key_case = $('#key_case');
+		$key_case.html(gKeyCase[gStatus.keyCase].text);
+		if(gKeyType[gStatus.keyType].hasUpper) {
+			$key_case.removeClass('disabled');
+		} else {
+			gStatus.keyCase = 'l';
+			$key_case.addClass('disabled');
+		}
+		//Key type
+		var sId = gStatus.keyType;
+		sId += '_keys';
+		if(gStatus.keyWidth == 'f') sId += '_f';
+		if(gStatus.keyCase == 'u') sId += '_u';
+		$('#key_type').html(gKeyType[gStatus.keyType].text);
+		$('.keys').addClass('hidden');
+		$('#' + sId).removeClass('hidden');
+
+		if(gStatus.keyType == 'ym') {
+			var sm = '';
+			if(sLast = gPyStack[gPyStack.length - 1]) {
+				if(!/\'$/.test(sLast)) {
+					sm = sLast;
+				}
+			}
+			if(oRule = PY.rule[sm]) {
+				$('.ym').each(function(el) {
+					var $ym = $(el);
+					var sKey = _trim($ym.text());
+					if(oRule[sKey]) {
+						$ym.removeClass('disabled');
+					} else {
+						$ym.addClass('disabled');
+					}
+				});
+			} else {
+				$('.ym').removeClass('disabled');
+			}
+		}
+		if(gStatus.keyType != 'sm' && gStatus.keyType != 'ym') {
+			_clearPinyin();
+			_clearWords();
+		}
+	}
+
+	function _shiftKeyType() {
+		switch(gStatus.keyType) {
+			case 'sm':
+			case 'ym':
+				gStatus.keyType = 'en';
+				break;
+			case 'en':
+				gStatus.keyType = 'sz';
+				break;
+			case 'sz':
+				gStatus.keyType = 'fh';
+				break;
+			case 'fh':
+			default:
+				gStatus.keyType = 'sm';
+				break;
+		}
+		_updateKeyboard();
+	}
+
+	function _toggleKeyWidth() {
+		gStatus.keyWidth = gStatus.keyWidth == 's' ? 'f' : 's';
+		_updateKeyboard();
+	}
+
+	function _toggleKeyCase() {
+		gStatus.keyCase = gStatus.keyCase == 'l' ? 'u' : 'l';
+		_updateKeyboard();
+	}
+
+	function _clearPinyin() {
+		gPyStack = [];
+		_updatePinyin();
+	}
+
+	function _clearWords() {
+		gWdPages = [];
+		$word_box.html('');
+		$('#page_up').addClass('disabled');
+		$('#page_dn').addClass('disabled');
+	}
+
+	function _resetPyKeyboard() {
+		if(sLast = gPyStack[gPyStack.length - 1]) {
+			if(/\'$/.test(sLast)) {
+				_updateKeyboard('sm');
+				_updateWordBox();
+			} else {
+				_updateKeyboard('ym');
+			}
+		} else {
+			_updateKeyboard('sm');
+		}
+	}
+
+	function _backDelelePinyin() {
+		if(gPyStack.length > 0) {
+			gPyStack = gPyStack.slice(0, gPyStack.length - 1);
+		}
+		_updatePinyin();
+		if(gStatus.keyType == 'sm' || gStatus.keyType == 'ym') {
+			_resetPyKeyboard();
+		}
+	}
+
+	function _updatePinyin() {
+		var sPinyin = gPyStack.join('');
+		$pinyin_box.html(sPinyin || '&nbsp;');
+	}
+
+	function _showWords() {
+		if(!gWdPages[gPageNo]) return;
+		$word_box.html(gWdPages[gPageNo]);
+		$word_box.find('.word').on('click', function() {
+			$text_box.get(0).value += this.innerHTML;
+			_clearPinyin();
+			_clearWords();
+			_updateKeyboard('sm');
+		}).on('touchstart', function() {
+			$(this).addClass('ontouch');
+		}).on('touchend', function() {
+			$(this).removeClass('ontouch');
+		});
+		if(gPageNo > 0) {
+			$('#page_up').removeClass('disabled');
+		} else {
+			$('#page_up').addClass('disabled');
+		}
+		if(gPageNo < (gWdPages.length - 1)) {
+			$('#page_dn').removeClass('disabled');
+		} else {
+			$('#page_dn').addClass('disabled');
+		}
+	}
+
+	function _updateWordBox(sPinyin) {
+		if(gPyStack.length == 0) {
+			_clearWords();
+			return;
+		}
+		var sPinyin = gPyStack.join('');
+		sPinyin = sPinyin.replace(/\'/g, '');
+		gWdPages = [];
+		if(aWords = PY.map[sPinyin]) {
+			var sHtml = '';
+			var nLen = 0;
+			for(var i=0; i<aWords.length; i++) {
+				sHtml += '<span class="word">' + aWords[i] + '</span>';
+				nLen += aWords[i].length;
+				if(nLen > 17) {  // 每页最多 18 字
+					gWdPages.push(sHtml);
+					sHtml = '';
+					nLen = 0;
+				}
+			}
+			if(sHtml != '') {
+				gWdPages.push(sHtml);
+			}
+			if(gWdPages.length > 0) {
+				gPageNo = 0;
+				_showWords();
+			}
+		} else {
+			_clearWords();
+		}
+	}
+	function _resetAll() {
+		gStatus = {
+			keyType: 'sm',
+			keyWidth: 's',
+			keyCase: 'l'
+		};
+		_clearPinyin();
+		_clearWords();
+		_updateKeyboard();
+	}
+
+	// -- START --
+	_resetAll();
+
+	$('li').on('touchstart', function() {
+		$(this).addClass('ontouch');
+	}).on('touchend', function() {
+		$(this).removeClass('ontouch');
+	});
+
+	$('.sm').on('click', function() {
+		if($(this).hasClass('disabled')) return;
+		gPyStack.push(_trim(this.innerHTML));
+		_updatePinyin();
+		_updateKeyboard('ym');
+	});
+
+	$('.ym').on('click', function() {
+		if($(this).hasClass('disabled')) return;
+		gPyStack.push(_trim(this.innerHTML) + "'");
+		_updatePinyin();
+		_updateWordBox();
+		_updateKeyboard('sm');
+	});
+
+	$('.fh').on('click', function() {
+		$text_box.get(0).value += _trim($(this).text());
+	});
+
+	$('#clear_pinyin').on('click', function() {
+		_clearPinyin();
+	});
+	$('#delete_pinyin').on('click', function() {
+		_backDelelePinyin();
+	});
+	$('#clear_text').on('click', function() {
+		$text_box.val('');
+	});
+	$('#new_line').on('click', function() {
+		$text_box.get(0).value += "\n";
+	});
+	$('#reset_all').on('click', function() {
+		_resetAll();
+	});
+	$('#delete_text').on('click', function() {
+		if(sWenzi = $text_box.val()) {
+			$text_box.val(sWenzi.substring(0, sWenzi.length - 1));
+		}
+	});
+	$('#key_type').on('click', function() {
+		_shiftKeyType()
+	});
+	$('#key_width').on('click', function() {
+		if($(this).hasClass('disabled')) return;
+		_toggleKeyWidth();
+	});
+	$('#key_case').on('click', function() {
+		if($(this).hasClass('disabled')) return;
+		_toggleKeyCase();
+	});
+
+	$('#page_up').on('click', function() {
+		if($(this).hasClass('disabled')) return;
+		gPageNo--;
+		_showWords();
+	});
+	$('#page_dn').removeClass('disabled').on('click', function() {
+		if($(this).hasClass('disabled')) return;
+		gPageNo++;
+		_showWords();
+	});
+	// -- END --
+});
+</script>
+</head>
+<body>
+<div id="container">
+	<textarea id="text_box"></textarea>
+	<ul class="keyboard">
+		<li id="delete_text">&lt;&lt;</li>
+		<li id="clear_text">×</li>
+		<li id="new_line">回</li>
+		<li id="key_type" class="dblwidth">拼音</li>
+		<li id="key_width" class="disabled">半</li>
+		<li id="key_case" class="disabled">a</li>
+		<li id="reset_all" class="dblwidth">重置</li>
+	</ul>
+	<table id="pinyin_table">
+		<tr>
+			<td width="210">
+				<div id="pinyin_box" class="pinyin_box">&nbsp;</div>
+			<td>
+			<td>
+				<ul class="keyboard">
+					<li id="delete_pinyin" class="bottom0">&lt;&lt;</li>
+					<li id="clear_pinyin" class="right0 bottom0">×</li>
+				</ul>
+			</td>
+		</tr>
+	</table>
+	<table id="word_table">
+		<tr>
+			<td width="260">
+				<div id="word_box"></div>
+			</td>
+			<td>
+				<ul class="keyboard">
+					<li id="page_up" class="disabled">↑</li>
+					<li id="page_dn" class="disabled bottom0">↓</li>
+				</ul>
+			</td>
+		</tr>
+	</div>
+	</table>
+	<ul id="sm_keys" class="keyboard keys">
+		<li class="sm">b</li>
+		<li class="sm">p</li>
+		<li class="sm">m</li>
+		<li class="sm">f</li>
+		<li class="sm">d</li>
+		<li class="sm">t</li>
+		<li class="sm">n</li>
+		<li class="sm">l</li>
+		<li class="sm">g</li>
+		<li class="sm">k</li>
+		<li class="sm">h</li>
+		<li class="sm">j</li>
+		<li class="sm">q</li>
+		<li class="sm">x</li>
+		<li class="sm">zh</li>
+		<li class="sm">ch</li>
+		<li class="sm">sh</li>
+		<li class="sm">r</li>
+		<li class="sm">z</li>
+		<li class="sm">c</li>
+		<li class="sm">s</li>
+		<li class="sm">y</li>
+		<li class="sm">w</li>
+		<li class="sm"></li>
+	</ul>
+	<ul id="ym_keys" class="keyboard keys hidden">
+		<li class="ym">a</li>
+		<li class="ym">o</li>
+		<li class="ym">e</li>
+		<li class="ym">i</li>
+		<li class="ym">u</li>
+		<li class="ym">ü</li>
+		<li class="ym">ai</li>
+		<li class="ym">ei</li>
+		<li class="ym">ui</li>
+		<li class="ym">ao</li>
+		<li class="ym">ou</li>
+		<li class="ym">ia</li>
+		<li class="ym">iu</li>
+		<li class="ym">ie</li>
+		<li class="ym">ua</li>
+		<li class="ym">uo</li>
+		<li class="ym">ue</li>
+		<li class="ym">üe</li>
+		<li class="ym">er</li>
+		<li class="ym">an</li>
+		<li class="ym">en</li>
+		<li class="ym">in</li>
+		<li class="ym">un</li>
+		<li class="ym">ün</li>
+		<li class="ym">ang</li>
+		<li class="ym">eng</li>
+		<li class="ym">ing</li>
+		<li class="ym">ong</li>
+		<li class="ym">ian</li>
+		<li class="ym">iao</li>
+		<li class="ym">iang</li>
+		<li class="ym">iong</li>
+	</ul>
+	<ul id="fh_keys" class="keyboard keys hidden">
+		<li class="fh">,</li>
+		<li class="fh">｡</li>
+		<li class="fh">､</li>
+		<li class="fh">;</li>
+		<li class="fh">:</li>
+		<li class="fh">!</li>
+		<li class="fh">?</li>
+		<li class="fh">_</li>
+		<li class="fh">(</li>
+		<li class="fh">)</li>
+		<li class="fh">[</li>
+		<li class="fh">]</li>
+		<li class="fh">{</li>
+		<li class="fh">}</li>
+		<li class="fh">&lt;</li>
+		<li class="fh">&gt;</li>
+		<li class="fh">"</li>
+		<li class="fh">'</li>
+		<li class="fh">#</li>
+		<li class="fh">$</li>
+		<li class="fh">%</li>
+		<li class="fh">&</li>
+		<li class="fh">=</li>
+		<li class="fh">+</li>
+		<li class="fh">-</li>
+		<li class="fh">*</li>
+		<li class="fh">/</li>
+		<li class="fh">\</li>
+		<li class="fh">|</li>
+		<li class="fh">~</li>
+		<li class="fh">《</li>
+		<li class="fh">》</li>
+	</ul>
+	<ul id="fh_keys_f" class="keyboard keys hidden">
+		<li class="fh">，</li>
+		<li class="fh">。</li>
+		<li class="fh">、</li>
+		<li class="fh">；</li>
+		<li class="fh">：</li>
+		<li class="fh">！</li>
+		<li class="fh">？</li>
+		<li class="fh">＿</li>
+		<li class="fh">（</li>
+		<li class="fh">）</li>
+		<li class="fh">［</li>
+		<li class="fh">］</li>
+		<li class="fh">｛</li>
+		<li class="fh">｝</li>
+		<li class="fh">＜</li>
+		<li class="fh">＞</li>
+		<li class="fh">”</li>
+		<li class="fh">’</li>
+		<li class="fh">＃</li>
+		<li class="fh">＄</li>
+		<li class="fh">％</li>
+		<li class="fh">＆</li>
+		<li class="fh">＊</li>
+		<li class="fh">＝</li>
+		<li class="fh">＋</li>
+		<li class="fh">－</li>
+		<li class="fh">×</li>
+		<li class="fh">／</li>
+		<li class="fh">￥</li>
+		<li class="fh">｜</li>
+		<li class="fh">～</li>
+	</ul>
+	<ul id="sz_keys" class="keyboard keys hidden">
+		<li class="fh">0</li>
+		<li class="fh">1</li>
+		<li class="fh">2</li>
+		<li class="fh">3</li>
+		<li class="fh">4</li>
+		<li class="fh">5</li>
+		<li class="fh">6</li>
+		<li class="fh">7</li>
+		<li class="fh">8</li>
+		<li class="fh">9</li>
+		<li class="fh">〇</li>
+		<li class="fh">一</li>
+		<li class="fh">二</li>
+		<li class="fh">三</li>
+		<li class="fh">四</li>
+		<li class="fh">五</li>
+		<li class="fh">六</li>
+		<li class="fh">七</li>
+		<li class="fh">八</li>
+		<li class="fh">九</li>
+		<li class="fh">十</li>
+		<li class="fh">ⅰ</li>
+		<li class="fh">ⅱ</li>
+		<li class="fh">ⅲ</li>
+		<li class="fh">ⅳ</li>
+		<li class="fh">ⅴ</li>
+		<li class="fh">ⅵ</li>
+		<li class="fh">ⅶ</li>
+		<li class="fh">ⅷ</li>
+		<li class="fh">ⅸ</li>
+		<li class="fh">ⅹ</li>
+	</ul>
+	<ul id="sz_keys_u" class="keyboard keys hidden">
+		<li class="fh">０</li>
+		<li class="fh">１</li>
+		<li class="fh">２</li>
+		<li class="fh">３</li>
+		<li class="fh">４</li>
+		<li class="fh">５</li>
+		<li class="fh">６</li>
+		<li class="fh">７</li>
+		<li class="fh">８</li>
+		<li class="fh">９</li>
+		<li class="fh">零</li>
+		<li class="fh">壹</li>
+		<li class="fh">贰</li>
+		<li class="fh">叁</li>
+		<li class="fh">肆</li>
+		<li class="fh">伍</li>
+		<li class="fh">陆</li>
+		<li class="fh">柒</li>
+		<li class="fh">捌</li>
+		<li class="fh">玖</li>
+		<li class="fh">拾</li>
+		<li class="fh">Ⅰ</li>
+		<li class="fh">Ⅱ</li>
+		<li class="fh">Ⅲ</li>
+		<li class="fh">Ⅳ</li>
+		<li class="fh">Ⅴ</li>
+		<li class="fh">Ⅵ</li>
+		<li class="fh">Ⅶ</li>
+		<li class="fh">Ⅷ</li>
+		<li class="fh">Ⅸ</li>
+		<li class="fh">Ⅹ</li>
+	</ul>
+	<ul id="en_keys" class="keyboard keys hidden">
+		<li class="fh">a</li>
+		<li class="fh">b</li>
+		<li class="fh">c</li>
+		<li class="fh">d</li>
+		<li class="fh">e</li>
+		<li class="fh">f</li>
+		<li class="fh">g</li>
+		<li class="fh">h</li>
+		<li class="fh">i</li>
+		<li class="fh">j</li>
+		<li class="fh">k</li>
+		<li class="fh">l</li>
+		<li class="fh">m</li>
+		<li class="fh">n</li>
+		<li class="fh">o</li>
+		<li class="fh">p</li>
+		<li class="fh">q</li>
+		<li class="fh">r</li>
+		<li class="fh">s</li>
+		<li class="fh">t</li>
+		<li class="fh">u</li>
+		<li class="fh">v</li>
+		<li class="fh">w</li>
+		<li class="fh">x</li>
+		<li class="fh">y</li>
+		<li class="fh">z</li>
+	</ul>
+	<ul id="en_keys_f" class="keyboard keys hidden">
+		<li class="fh">ａ</li>
+		<li class="fh">ｂ</li>
+		<li class="fh">ｃ</li>
+		<li class="fh">ｄ</li>
+		<li class="fh">ｅ</li>
+		<li class="fh">ｆ</li>
+		<li class="fh">ｇ</li>
+		<li class="fh">ｈ</li>
+		<li class="fh">ｉ</li>
+		<li class="fh">ｊ</li>
+		<li class="fh">ｋ</li>
+		<li class="fh">ｌ</li>
+		<li class="fh">ｍ</li>
+		<li class="fh">ｎ</li>
+		<li class="fh">ｏ</li>
+		<li class="fh">ｐ</li>
+		<li class="fh">ｑ</li>
+		<li class="fh">ｒ</li>
+		<li class="fh">ｓ</li>
+		<li class="fh">ｔ</li>
+		<li class="fh">ｕ</li>
+		<li class="fh">ｖ</li>
+		<li class="fh">ｗ</li>
+		<li class="fh">ｘ</li>
+		<li class="fh">ｙ</li>
+		<li class="fh">ｚ</li>
+	</ul>
+	<ul id="en_keys_u" class="keyboard keys hidden">
+		<li class="fh">A</li>
+		<li class="fh">B</li>
+		<li class="fh">C</li>
+		<li class="fh">D</li>
+		<li class="fh">E</li>
+		<li class="fh">F</li>
+		<li class="fh">G</li>
+		<li class="fh">H</li>
+		<li class="fh">I</li>
+		<li class="fh">J</li>
+		<li class="fh">K</li>
+		<li class="fh">L</li>
+		<li class="fh">M</li>
+		<li class="fh">N</li>
+		<li class="fh">O</li>
+		<li class="fh">P</li>
+		<li class="fh">Q</li>
+		<li class="fh">R</li>
+		<li class="fh">S</li>
+		<li class="fh">T</li>
+		<li class="fh">U</li>
+		<li class="fh">V</li>
+		<li class="fh">W</li>
+		<li class="fh">X</li>
+		<li class="fh">Y</li>
+		<li class="fh">Z</li>
+	</ul>
+	<ul id="en_keys_f_u" class="keyboard keys hidden">
+		<li class="fh">Ａ</li>
+		<li class="fh">Ｂ</li>
+		<li class="fh">Ｃ</li>
+		<li class="fh">Ｄ</li>
+		<li class="fh">Ｅ</li>
+		<li class="fh">Ｆ</li>
+		<li class="fh">Ｇ</li>
+		<li class="fh">Ｈ</li>
+		<li class="fh">Ｉ</li>
+		<li class="fh">Ｊ</li>
+		<li class="fh">Ｋ</li>
+		<li class="fh">Ｌ</li>
+		<li class="fh">Ｍ</li>
+		<li class="fh">Ｎ</li>
+		<li class="fh">Ｏ</li>
+		<li class="fh">Ｐ</li>
+		<li class="fh">Ｑ</li>
+		<li class="fh">Ｒ</li>
+		<li class="fh">Ｓ</li>
+		<li class="fh">Ｔ</li>
+		<li class="fh">Ｕ</li>
+		<li class="fh">Ｖ</li>
+		<li class="fh">Ｗ</li>
+		<li class="fh">Ｘ</li>
+		<li class="fh">Ｙ</li>
+		<li class="fh">Ｚ</li>
+	</ul>
+	<div id="footer">
+		<hr />
+		<strong>Smart Input (c) 2010 Jlake Ou</strong>
+	</div>
+</div>
+</body>
+</html>
